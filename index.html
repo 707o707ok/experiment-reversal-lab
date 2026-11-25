@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Experiment Reversal Lab</title>
+<style>
+:root {color-scheme:light; font-family: system-ui,sans-serif; color:#132820; background:#f2f5ee}
+* {box-sizing:border-box} body {margin:0} main {max-width:940px; margin:auto; padding:55px 24px}
+header {border-bottom:1px solid #b9c8bf; padding-bottom:22px; margin-bottom:24px}
+h1 {font-size:clamp(2.4rem,7vw,4.8rem); letter-spacing:-.07em; line-height:.97; margin:0}
+h2 {font-size:1.15rem; margin-top:0} p {line-height:1.55}
+.grid {display:grid; grid-template-columns:1fr 1fr; gap:16px}
+section {background:#fff; border:1px solid #cdd8ce; border-radius:18px; padding:20px}
+label {display:flex; justify-content:space-between; gap:8px; font-weight:600}
+input {width:100%; accent-color:#226648; margin:10px 0 20px}
+button {background:#154c36; color:white; border:0; border-radius:8px; padding:10px 15px; font:inherit; cursor:pointer}
+table {width:100%; border-collapse:collapse; text-align:right; font-variant-numeric:tabular-nums}
+th,td {padding:9px 5px; border-bottom:1px solid #dfe7dc} th:first-child {text-align:left}
+footer {margin-top:18px} #chart {width:100%; height:auto; overflow:visible}
+#status {font-weight:700; color:#154c36} @media(max-width:670px){.grid{grid-template-columns:1fr} main{padding-top:34px}}
+</style>
+</head>
+<body>
+<main>
+<header><h1>Experiment<br>Reversal Lab</h1><p>Can a variant improve conversion on every device and still lose overall? Change who sees each version to find out.</p></header>
+<div class="grid">
+<section>
+<h2>Traffic mix</h2>
+<label for="control">Control mobile share <output id="control-value" for="control"></output></label>
+<input type="range" id="control" min="0" max="100" value="20">
+<label for="variant">Variant mobile share <output id="variant-value" for="variant"></output></label>
+<input type="range" id="variant" min="0" max="100" value="80">
+<label for="reference">Reference mobile share <output id="reference-value" for="reference"></output></label>
+<input type="range" id="reference" min="0" max="100" value="50">
+<button type="button" id="reset">Reset example</button>
+</section>
+<section>
+<h2>Conversion rates</h2>
+<table>
+<thead><tr><th scope="col">Traffic</th><th scope="col">Control</th><th scope="col">Variant</th></tr></thead>
+<tbody>
+<tr><th scope="row">Mobile</th><td>10%</td><td>12%</td></tr>
+<tr><th scope="row">Desktop</th><td>30%</td><td>32%</td></tr>
+<tr><th scope="row">Observed mix</th><td id="a"></td><td id="b"></td></tr>
+<tr><th scope="row">Reference mix</th><td id="reference-a"></td><td id="reference-b"></td></tr>
+</tbody>
+</table>
+<div aria-live="polite"><p id="status"></p><p id="effects"></p></div>
+</section>
+<section style="grid-column:1/-1">
+<h2>Where does the result flip?</h2>
+<svg id="chart" viewBox="0 0 560 190" role="img" aria-label="Aggregate conversion as variant mobile share increases">
+<path d="M44 16V151H532" fill="none" stroke="#809189"/>
+<text x="44" y="178" font-size="14">0% mobile</text><text x="532" y="178" text-anchor="end" font-size="14">100% mobile</text>
+<path id="curve" fill="none" stroke="#227b55" stroke-width="4"/>
+<line id="baseline" x1="44" x2="532" stroke="#805637" stroke-width="2" stroke-dasharray="6 5"/>
+<circle id="marker" r="6" fill="#14573e"/>
+</svg>
+<p id="threshold"></p>
+<p>Green shows variant conversion across possible mixes. The dot marks your chosen mix. The dashed line shows control conversion.</p>
+</section>
+</div>
+<footer><p>All rates are synthetic. Standardization applies the same reference mix to both arms. This example compares expected rates and does not estimate uncertainty or establish causality.</p></footer>
+</main>
+<script src="model.js"></script>
+<script>
+const el = id => document.getElementById(id);
+const inputs = ["control", "variant", "reference"];
+const rates = {control:{mobile:.10, desktop:.30}, variant:{mobile:.12, desktop:.32}};
+const pct = value => (100 * value).toFixed(1) + "%";
+const pp = value => (value > 1e-9 ? "+" : "") + (100 * (Math.abs(value) < 1e-9 ? 0 : value)).toFixed(1) + " pp";
+const x = mix => 44 + 488 * mix;
+const y = rate => 151 - 360 * rate;
+function render() {
+  const [control, variant, reference] = inputs.map(id => {
+    const share = Number(el(id).value);
+    el(id + "-value").value = share + "%";
+    return share / 100;
+  });
+  const result = analyze(control, variant, reference, rates);
+  el("a").textContent = pct(result.a);
+  el("b").textContent = pct(result.b);
+  el("reference-a").textContent = pct(result.referenceA);
+  el("reference-b").textContent = pct(result.referenceB);
+  el("status").textContent = result.raw < -1e-9 ? "Simpson’s paradox: variant wins on both devices and loses overall." :
+    result.raw > 1e-9 ? "Variant wins on both devices and overall." : "The overall rates tie.";
+  el("effects").textContent = "Observed lift " + pp(result.raw) + " · Standardized lift " + pp(result.adjusted);
+  el("curve").setAttribute("d", "M " + x(0) + " " + y(rates.variant.desktop) + " L " + x(1) + " " + y(rates.variant.mobile));
+  for (const attr of ["y1", "y2"]) el("baseline").setAttribute(attr, y(result.a));
+  el("marker").setAttribute("cx", x(variant));
+  el("marker").setAttribute("cy", y(result.b));
+  const crossing = result.crossing;
+  el("threshold").textContent = crossing === null || crossing < -1e-9 || crossing > 1 + 1e-9
+    ? "No tie is possible with this control mix."
+    : "The aggregate rates tie at " + pct(Math.min(1, Math.max(0, crossing))) + " variant mobile traffic.";
+}
+for (const id of inputs) el(id).addEventListener("input", render);
+el("reset").addEventListener("click", () => {
+  for (const id of inputs) el(id).value = el(id).defaultValue;
+  render();
+});
+render();
+</script>
+</body>
+</html>
